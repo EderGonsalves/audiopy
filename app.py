@@ -82,4 +82,6 @@ def download_file(filename):
     return send_from_directory(app.config['OUTPUT_FOLDER'], filename)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Configurar a porta do serviço no Render
+    port = int(os.environ.get('PORT', 10000))  # Usar a porta da variável de ambiente ou 10000 por padrão
+    app.run(host='0.0.0.0', port=port, debug=True)
