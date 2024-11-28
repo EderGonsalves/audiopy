@@ -1,6 +1,5 @@
 from flask import Flask, request, render_template, send_from_directory
 import os
-from pydub import AudioSegment
 import subprocess
 
 app = Flask(__name__)
@@ -13,37 +12,27 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['OUTPUT_FOLDER'] = OUTPUT_FOLDER
 
-def dividir_audio_em_partes(input_file, output_folder, max_size_mb=10):
+def dividir_audio_com_ffmpeg(input_file, output_folder, max_size_mb=10):
     """
-    Divide um arquivo de áudio longo em partes menores do que max_size_mb.
+    Divide um arquivo de áudio em partes menores usando ffmpeg, sem carregar o arquivo inteiro na memória.
     """
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-    
-    audio = AudioSegment.from_file(input_file)
     bitrate_kbps = 128  # Taxa de bits típica para MP3
-    bytes_per_second = (bitrate_kbps * 1000) // 8
     max_size_bytes = max_size_mb * 1024 * 1024
-    max_duration_ms = (max_size_bytes / bytes_per_second) * 1000
+    max_duration_seconds = (max_size_bytes / (bitrate_kbps * 1000 / 8))  # max size in bytes to duration in seconds
+    
+    # Obtendo a duração total do arquivo de áudio
+    result = subprocess.run(['ffmpeg', '-i', input_file, '-f', 'null', '-'], capture_output=True, text=True)
+    duration_line = [line for line in result.stderr.splitlines() if "Duration" in line]
+    duration_str = duration_line[0].split()[1]
+    duration = sum(int(x) * 60 ** i for i, x in enumerate(reversed(duration_str.split(":"))))
 
     num_parts = 0
-    for i in range(0, len(audio), int(max_duration_ms)):
-        part = audio[i:i + int(max_duration_ms)]
-        part_file = os.path.join(output_folder, f"parte_{num_parts + 1}.mp3")
-        part.export(part_file, format="mp3", bitrate=f"{bitrate_kbps}k")
+    for start_time in range(0, duration, int(max_duration_seconds)):
+        output_file = os.path.join(output_folder, f"parte_{num_parts + 1}.mp3")
+        subprocess.run(['ffmpeg', '-i', input_file, '-ss', str(start_time), '-t', str(max_duration_seconds), '-acodec', 'libmp3lame', '-ab', f'{bitrate_kbps}k', output_file])
         num_parts += 1
 
     return num_parts
-
-def run_script(script_path):
-    """
-    Executa outro script Python após a execução de um arquivo.
-    """
-    try:
-        result = subprocess.run(['python', script_path], check=True, capture_output=True, text=True)
-        return f"Script {script_path} executado com sucesso!\nSaída:\n{result.stdout}"
-    except subprocess.CalledProcessError as e:
-        return f"Erro ao executar o script {script_path}.\nErro:\n{e.stderr}"
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -60,16 +49,11 @@ def index():
         audio_file.save(file_path)
 
         # Dividir o áudio em partes
-        num_parts = dividir_audio_em_partes(file_path, app.config['OUTPUT_FOLDER'])
+        num_parts = dividir_audio_com_ffmpeg(file_path, app.config['OUTPUT_FOLDER'])
         
-        # Executar o script novo-baserow.py
-        script_path = "novo-baserow.py"  # Caminho para o script a ser executado
-        script_output = run_script(script_path)
-
         # Retornar o resultado para o navegador
         return (
-            f"Áudio dividido em {num_parts} partes. Verifique a pasta: {app.config['OUTPUT_FOLDER']}<br>"
-            f"Saída do script <b>{script_path}</b>:<br><pre>{script_output}</pre>"
+            f"Áudio dividido em {num_parts} partes. Verifique a pasta: {app.config['OUTPUT_FOLDER']}"
         )
 
     return render_template('index.html')
